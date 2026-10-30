@@ -1,0 +1,239 @@
+---
+title: "PEC 2: Técnicas de Visualización de Datos"
+author: "Adrián Moreno García"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float: true
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r load_libraries, include=FALSE, message=FALSE, warning=FALSE}
+# Carga de librerías
+library(plotly)
+library(gapminder)
+library(dplyr)
+library(ggplot2)
+library(ggalluvial)
+library(reshape2)
+library(MASS)
+```
+
+# Representaciones gráficas de las diferentes técnicas
+
+Muestro los diferentes gráficos que se me piden, para cada uno de ellos se utiliza su correspondiente dataset para ajustarse a las características de la representación.
+
+
+## TÉCNICA GRUPO I (Básicas y populares): Treemap
+
+**¿Cómo se reparte la riqueza en el mundo?**
+
+Este Treemap interactivo (Gapminder 2007) jerarquiza la riqueza mundial asignando el tamaño de las cajas al PIB per cápita y el color en escala logarítmica a la población. Dirigido a analistas y tomadores de decisiones, busca evidenciar de forma inmediata el contraste entre potencias económicas pequeñas pero prósperas y gigantes demográficos de menor ingreso. El uso de la paleta Viridis, los bordes limpios y la interactividad por niveles (continente-país) permiten descubrir patrones globales de desigualdad socioeconómica sin sesgos visuales por valores extremos.
+
+```{r treemap}
+# 1. Filtrar año 2007
+df_2007 <- gapminder %>% filter(year == 2007)
+
+# 2. Resumir datos por continente (Nivel Raíz)
+df_continents <- df_2007 %>%
+  group_by(continent) %>%
+  summarise(
+    gdpPercap = weighted.mean(gdpPercap, w = pop),
+    pop = mean(pop),
+    .groups = "drop"
+  ) %>%
+  rename(labels = continent) %>%
+  mutate(
+    parents = "",
+    pop_log = log10(pop)
+  )
+
+# 3. Preparar datos por país (Nivel Hijo)
+df_countries <- df_2007 %>%
+  transmute(
+    labels = country,
+    parents = continent,
+    gdpPercap = gdpPercap,
+    pop = pop,
+    pop_log = log10(pop)
+  )
+
+# 4. Unir ambos niveles
+df_treemap <- bind_rows(df_continents, df_countries)
+
+# 5. Rangos estrictos para el gradiente
+min_log <- log10(min(df_countries$pop))
+max_log <- log10(max(df_countries$pop))
+
+# 6. Generar Treemap de Alto Impacto Visual
+fig_treemap <- plot_ly(
+  data = df_treemap,
+  type = 'treemap',
+  labels = ~labels,
+  parents = ~parents,
+  values = ~gdpPercap,
+  marker = list(
+    colors = ~pop_log,
+    colorscale = 'Viridis',      # Paleta continua moderna y de alto contraste
+    reversescale = TRUE,       # Amarillo/Verde = Menos pob. | Morado/Azul = Más pob.
+    cmin = min_log,
+    cmax = max_log,
+    showscale = TRUE,
+    colorbar = list(
+      title = list(
+        text = "<b>Población</b>",
+        font = list(size = 13, color = "#2C3E50")
+      ),
+      tickvals = c(6, 7, 8, 9),
+      ticktext = c("1M", "10M", "100M", "1B"),
+      tickfont = list(size = 11),
+      len = 0.85
+    ),
+    line = list(color = "#FFFFFF", width = 1.8) 
+  ),
+  tiling = list(packing = "squarify", pad = 3),
+  customdata = ~pop,
+  hovertemplate = paste0(
+    "<b>%{label}</b><br>",
+    "PIB per cápita: <b>$%{value:,.0f}</b><br>",
+    "Población: <b>%{customdata:,.0f}</b><extra></extra>"
+  ),
+  texttemplate = "<b>%{label}</b><br><span style='font-size:10px;'>$%{value:,.0f}</span>",
+  textfont = list(family = "Arial", size = 13, color = "#FFFFFF"),
+  pathbar = list(visible = TRUE) # Barra superior para saber en qué continente estás al hacer zoom
+) %>%
+  layout(
+    title = list(
+      text = "<b>Treemap: PIB per Cápita (Tamaño) y Población (Color) - 2007</b>",
+      font = list(size = 17, color = "#1A252C"),
+      x = 0.5,
+      xanchor = "center"
+    ),
+    paper_bgcolor = "rgba(0,0,0,0)",
+    plot_bgcolor = "rgba(0,0,0,0)",
+    margin = list(l = 15, r = 15, t = 60, b = 15)
+  )
+
+fig_treemap
+```
+
+
+## TÉCNICA GRUPO II (Habituales y específicas): Alluvial Diagram
+
+**¿Mujeres y niños primero?**
+
+Este Diagrama Aluvial (Titanic) representa el flujo categórico de los pasajeros distribuidos secuencialmente por Clase, Sexo y Supervivencia, asignando el grosor de los flujos a la frecuencia y el color a la supervivencia. Dirigido a estudiantes, historiadores o analistas de datos, busca evidenciar de forma directa cómo factores socioestructurales condicionaron la probabilidad de salvarse ("mujeres y niños primero" y la ventaja de la primera clase). La segmentación por estratos y el contraste cromático binario permiten rastrear trayectorias individuales complejas y descubrir patrones de mortalidad masiva entre la tripulación y los hombres de tercera clase.
+
+```{r alluvial}
+# 1. Datos con etiquetas más breves para encajar perfectamente
+df_titanic <- as.data.frame(Titanic) %>%
+  mutate(
+    Class = factor(Class, levels = c("1st", "2nd", "3rd", "Crew"), 
+                   labels = c("1ª Cl.", "2ª Cl.", "3ª Cl.", "Trip.")),
+    Sex = factor(Sex, levels = c("Male", "Female"), 
+                 labels = c("Hombre", "Mujer")),
+    Age = factor(Age, levels = c("Child", "Adult"), 
+                 labels = c("Niño", "Adulto")),
+    Survived = factor(Survived, levels = c("No", "Yes"), 
+                      labels = c("No", "Sí"))
+  )
+
+# 2. Gráfico con ancho de estrato ampliado y etiquetas horizontales compactas
+ggplot(df_titanic,
+       aes(y = Freq, axis1 = Class, axis2 = Sex, axis3 = Age, axis4 = Survived)) +
+  geom_alluvium(aes(fill = Survived), width = 1/4, alpha = 0.8, knot.pos = 0.4) +
+  geom_stratum(width = 1/4, fill = "#F8F9FA", color = "#2C3E50", linewidth = 0.4) +
+  geom_text(
+    stat = "stratum", 
+    aes(label = after_stat(stratum)), 
+    angle = 0,           
+    size = 2.8,          
+    fontface = "bold",
+    color = "#1A252C"
+  ) +
+  scale_x_discrete(limits = c("Clase", "Sexo", "Edad", "Superviviente"), expand = c(.08, .08)) +
+  scale_fill_manual(values = c("No" = "#E41A1C", "Sí" = "#2B8CBE")) +
+  labs(
+    title = "Diagrama Aluvial de Pasajeros del Titanic",
+    subtitle = "Flujo de distribución según Clase social, Sexo, Edad y Supervivencia",
+    y = "Número total de personas",
+    x = NULL,
+    fill = "¿Superviviente?"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", size = 15, color = "#1A252C"),
+    plot.subtitle = element_text(size = 11, color = "#555555", margin = margin(b = 10)),
+    axis.text.x = element_text(face = "bold", size = 11, color = "#2C3E50"),
+    axis.title.y = element_text(size = 11, face = "bold", color = "#2C3E50"),
+    panel.grid.major.x = element_blank(),
+    legend.position = "right"
+  )
+```
+
+
+## TÉCNICA GRUPO III (Menos habituales o específicas): Contour plot
+
+**Peligro bajo tierra**
+
+Este Contour Plot (Sismos en Fiyi) representa la densidad espacial de la actividad sísmica calculada mediante estimación de densidad kernel 2D, proyectando la concentración de eventos en un plano de longitud y latitud mediante isolíneas y la paleta cromática Portland. Dirigido a geólogos, analistas de riesgo y vulcanólogos, busca identificar de forma precisa los epicentros de mayor acumulación de terremotos en la región. Las etiquetas numéricas sobre las líneas de contorno y la escala cromática permiten delimitar zonas de alta peligrosidad sísmica frente a áreas de menor actividad, facilitando el descubrimiento de patrones estructurales en fallas tectónicas.
+
+```{r contour}
+# 1. Generar la densidad 2D (100x100) sobre quakes
+densidad_quakes <- kde2d(quakes$long, quakes$lat, n = 100)
+
+# 2. Renderizado de Contour Plot estilizado
+fig_contour <- plot_ly(
+  x = ~densidad_quakes$x,
+  y = ~densidad_quakes$y,
+  z = ~densidad_quakes$z,
+  type = "contour",
+  colorscale = 'Portland',
+  colorbar = list(
+    title = list(
+      text = "<b>Densidad de<br>Eventos</b>", # Nombre de leyenda claro
+      font = list(size = 13, color = "#2C3E50")
+    ),
+    tickfont = list(size = 11)
+  ),
+  contours = list(
+    showlabels = TRUE,
+    labelfont = list(
+      size = 11, 
+      color = '#ffffff' # Texto blanco de alto contraste
+    )
+  ),
+  line = list(width = 0.8) # Líneas de contorno más definidas
+) %>%
+  layout(
+    title = list(
+      text = "<b>Contour Plot: Concentración de Actividad Sísmica en Fiyi</b>",
+      font = list(size = 16, color = "#1A252C"),
+      x = 0.5, xanchor = "center" # Título centrado
+    ),
+    xaxis = list(
+      title = list(text = "<b>Longitud (°)</b>", font = list(size = 13, color = "#2C3E50")),
+      tickfont = list(size = 11),
+      showgrid = TRUE,
+      gridcolor = "rgba(200, 200, 200, 0.3)"
+    ),
+    yaxis = list(
+      title = list(text = "<b>Latitud (°)</b>", font = list(size = 13, color = "#2C3E50")),
+      tickfont = list(size = 11),
+      showgrid = TRUE,
+      gridcolor = "rgba(200, 200, 200, 0.3)"
+    ),
+    paper_bgcolor = "rgba(0,0,0,0)", # Fondo limpio
+    plot_bgcolor = "rgba(0,0,0,0)",
+    margin = list(l = 60, r = 20, t = 60, b = 60)
+  )
+
+fig_contour
+```
